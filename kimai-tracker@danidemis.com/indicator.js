@@ -19,94 +19,132 @@ export const KimaiIndicator = GObject.registerClass(
             });
             this.add_child(this.icon);
 
+            // Inizializziamo il menu con un elemento per renderlo cliccabile
+            this._setupInitialMenu();
+
             this.menu.connect('open-state-changed', (menu, open) => {
-                if (open) this._refreshMenu();
+                if (open) {
+                    this._refreshMenu().catch(err => {
+                        log("KIMAI_DEBUG_ERROR: Errore asincrono menu: " + err);
+                    });
+                }
             });
         }
 
+        _setupInitialMenu() {
+            this.menu.removeAll();
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Caricamento..."));
+        }
+
         async _refreshMenu() {
+            log("KIMAI_DEBUG: Esecuzione _refreshMenu...");
             this.menu.removeAll();
 
-            // Voce di TEST sempre presente
             let testItem = new PopupMenu.PopupMenuItem("🔄 Verifica Connessione...");
-            testItem.connect('activate', () => this._testConnection());
+            testItem.connect('activate', () => {
+                this._testConnection().catch(err => log("KIMAI_DEBUG: Errore test: " + err));
+            });
             this.menu.addMenuItem(testItem);
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-            // 1. Controllo se l'API è configurata
             if (!this.extension.api) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("⚠️ Configura un server nelle impostazioni"));
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("⚠️ Configura server"));
                 return;
             }
 
-            // 2. Controllo se c'è un timer attivo
             if (this.activeTimesheet) {
-                let stopItem = new PopupMenu.PopupMenuItem("🛑 Ferma Attività in corso");
+                let stopItem = new PopupMenu.PopupMenuItem("🛑 Ferma Attività");
                 stopItem.connect('activate', () => this._stopCurrentTimer());
                 this.menu.addMenuItem(stopItem);
                 return;
             }
 
-            // 3. Recupero Clienti
-            const customers = await this.extension.api.getCustomers();
-            if (!customers || customers.length === 0) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessun cliente trovato o errore API"));
-                return;
-            }
+            try {
+                const customers = await this.extension.api.getCustomers();
+                
+                // CRUCIALE: Controlliamo se 'customers' è effettivamente un array
+                if (!Array.isArray(customers)) {
+                    log("KIMAI_DEBUG_ERROR: Risposta API non è un array: " + JSON.stringify(customers));
+                    this.menu.addMenuItem(new PopupMenu.PopupMenuItem("❌ Errore: Risposta server non valida"));
+                    return;
+                }
 
-            customers.forEach(customer => {
-                let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
-                this.menu.addMenuItem(customerItem);
+                if (customers.length === 0) {
+                    this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessun cliente trovato"));
+                    return;
+                }
 
-                customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
-                    if (cOpen && cMenu.isEmpty()) {
-                        const projects = await this.extension.api.getProjects(customer.id);
-                        projects?.forEach(project => {
-                            let projectItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
-                            cMenu.addMenuItem(projectItem);
+                customers.forEach(customer => {
+                    let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
+                    this.menu.addMenuItem(customerItem);
 
-                            projectItem.menu.connect('open-state-changed', async (pMenu, pOpen) => {
-                                if (pOpen && pMenu.isEmpty()) {
-                                    const activities = await this.extension.api.getActivities(project.id);
-                                    activities?.forEach(activity => {
-                                        let actItem = new PopupMenu.PopupMenuItem(`  ↳ ${activity.name}`);
-                                        actItem.connect('activate', () => {
-                                            this._startTimer(project.id, activity.id);
-                                        });
-                                        pMenu.addMenuItem(actItem);
+                    customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
+                        if (cOpen && cMenu.isEmpty()) {
+                            const projects = await this.extension.api.getProjects(customer.id);
+                            if (Array.isArray(projects)) {
+                                projects.forEach(project => {
+                                    let pItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
+                                    cMenu.addMenuItem(pItem);
+
+                                    pItem.menu.connect('open-state-changed', async (aMenu, aOpen) => {
+                                        if (aOpen && aMenu.isEmpty()) {
+                                            const activities = await this.extension.api.getActivities(project.id);
+                                            if (Array.isArray(activities)) {
+                                                activities.forEach(act => {
+                                                    let actItem = new PopupMenu.PopupMenuItem(`→ ${act.name}`);
+                                                    actItem.connect('activate', () => this._startTimer(project.id, act.id));
+                                                    aMenu.addMenuItem(actItem);
+                                                });
+                                            }
+                                        }
                                     });
-                                }
-                            });
-                        });
-                    }
+                                });
+                            }
+                        }
+                    });
                 });
-            });
+            } catch (e) {
+                log("KIMAI_DEBUG_ERROR: Errore durante il caricamento: " + e);
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("❌ Errore di rete"));
+            }
         }
 
         async _testConnection() {
-            if (!this.extension.api) {
-                Main.notify("Kimai: Nessun server configurato!");
-                return;
+            try {
+                if (!this.extension.api) throw new Error("API non inizializzata");
+                const ok = await this.extension.api.testConnection();
+                Main.notify(ok ? "Kimai: Connessione OK ✅" : "Kimai: Errore credenziali ❌");
+            } catch (e) {
+                Main.notify("Kimai: Errore di connessione ❌");
+                log("KIMAI_DEBUG_ERROR: Test fallito: " + e);
             }
-            const ok = await this.extension.api.testConnection();
-            Main.notify(ok ? "Kimai: Connessione riuscita! ✅" : "Kimai: Errore di connessione! ❌");
         }
 
-        async _startTimer(projectId, activityId) {
-            const result = await this.extension.api.startTimer(projectId, activityId);
-            if (result) {
-                this.activeTimesheet = result;
-                this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-stop-symbolic' });
-                Main.notify("Kimai: Attività avviata!");
+        async _startTimer(pId, aId) {
+            try {
+                const res = await this.extension.api.startTimer(pId, aId);
+                if (res && res.id) {
+                    this.activeTimesheet = res;
+                    this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-stop-symbolic' });
+                    Main.notify("Kimai: Timer avviato!");
+                } else {
+                    throw new Error("Dati mancanti nella risposta");
+                }
+            } catch (e) {
+                Main.notify("Kimai: Impossibile avviare il timer ❌");
             }
         }
 
         async _stopCurrentTimer() {
-            if (this.activeTimesheet) {
-                await this.extension.api.stopTimer(this.activeTimesheet.id);
-                this.activeTimesheet = null;
-                this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' });
-                Main.notify("Kimai: Attività fermata!");
+            try {
+                if (this.activeTimesheet) {
+                    await this.extension.api.stopTimer(this.activeTimesheet.id);
+                    this.activeTimesheet = null;
+                    this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' });
+                    Main.notify("Kimai: Timer fermato!");
+                }
+            } catch (e) {
+                Main.notify("Kimai: Impossibile fermare il timer ❌");
             }
         }
     }

@@ -22,16 +22,24 @@ export class KimaiClient {
 
         try {
             const bytes = await this.session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null);
+            const status = message.get_status();
+            
+            // Se il server risponde con errore (es. 403 Forbidden)
+            if (status < 200 || status >= 300) {
+                log(`KIMAI_API_ERROR: Status ${status} per ${endpoint}`);
+                return null;
+            }
+
             return JSON.parse(new TextDecoder().decode(bytes.toArray()));
         } catch (e) {
-            console.error(`Kimai Error (${endpoint}): ${e}`);
+            log(`KIMAI_API_ERROR: Errore critico su ${endpoint}: ${e}`);
             return null;
         }
     }
 
-    async getCustomers() { return await this._apiCall('GET', 'customers'); }
-    async getProjects(id) { return await this._apiCall('GET', `projects?customer=${id}`); }
-    async getActivities(id) { return await this._apiCall('GET', `activities?project=${id}`); }
+    async getCustomers() { return await this._apiCall('GET', 'customers') || []; }
+    async getProjects(id) { return await this._apiCall('GET', `projects?customer=${id}`) || []; }
+    async getActivities(id) { return await this._apiCall('GET', `activities?project=${id}`) || []; }
     
     async startTimer(projectId, activityId) {
         return await this._apiCall('POST', 'timesheets', {
@@ -47,6 +55,6 @@ export class KimaiClient {
 
     async testConnection() {
         const result = await this._apiCall('GET', 'users/me');
-        return result && result.username;
+        return result && result.username ? true : false;
     }
 }
