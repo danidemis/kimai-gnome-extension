@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.kimai-tracker@danidemis.com" path="/org/gnome/shell/extensions/kimai-tracker/">
+    <key name="servers-json" type="s">
+      <default>'[]'</default>
+      <summary>Lista dei server Kimai in formato JSON</summary>
+    </key>
+  </schema>
+</schemalist>

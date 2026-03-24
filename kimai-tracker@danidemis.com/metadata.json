@@ -1,0 +1,8 @@
+{
+  "uuid": "kimai-tracker@danidemis.com",
+  "name": "Kimai Quick Tracker",
+  "description": "Add Kimai activity quickly",
+  "shell-version": ["45", "46", "47"],
+  "url": "https://github.com/danidemis",
+  "settings-schema": "org.gnome.shell.extensions.kimai-tracker@danidemis.com"
+}
