@@ -3,6 +3,7 @@ import St from 'gi://St';
 import Gio from 'gi://Gio';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 export const KimaiIndicator = GObject.registerClass(
     { GTypeName: 'KimaiIndicator' },
@@ -12,70 +13,60 @@ export const KimaiIndicator = GObject.registerClass(
             this.extension = extension;
             this.activeTimesheet = null;
 
-            // Icona nella barra superiore
             this.icon = new St.Icon({
                 gicon: new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' }),
                 style_class: 'system-status-icon'
             });
             this.add_child(this.icon);
 
-            // Carichiamo i dati ogni volta che il menu viene cliccato/aperto
             this.menu.connect('open-state-changed', (menu, open) => {
-                if (open) {
-                    this._refreshMenu();
-                }
+                if (open) this._refreshMenu();
             });
         }
 
         async _refreshMenu() {
             this.menu.removeAll();
 
-            // Se c'è un'attività in corso, mostriamo solo il tasto STOP
+            // Tasto Test Connessione sempre visibile in alto
+            let testItem = new PopupMenu.PopupMenuItem("🔄 Verifica Connessione...");
+            testItem.connect('activate', () => this._testConnection());
+            this.menu.addMenuItem(testItem);
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
             if (this.activeTimesheet) {
-                let stopItem = new PopupMenu.PopupMenuItem("🛑 Ferma Attività in corso");
+                let stopItem = new PopupMenu.PopupMenuItem("🛑 Ferma Attività");
                 stopItem.connect('activate', () => this._stopCurrentTimer());
                 this.menu.addMenuItem(stopItem);
                 return;
             }
 
-            // Recupero Clienti dal server
-            const customers = await this.extension.api.getCustomers();
-            
-            if (!customers || customers.length === 0) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessun cliente trovato o errore API"));
+            if (!this.extension.api) {
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("⚠️ Configura un server nelle impostazioni"));
                 return;
             }
+
+            const customers = await this.extension.api.getCustomers();
+            if (!customers) return;
 
             customers.forEach(customer => {
                 let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
                 this.menu.addMenuItem(customerItem);
 
-                // Lazy loading dei Progetti quando si espande il Cliente
                 customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
                     if (cOpen && cMenu.isEmpty()) {
                         const projects = await this.extension.api.getProjects(customer.id);
-                        
-                        projects.forEach(project => {
-                            let projectItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
-                            cMenu.addMenuItem(projectItem);
+                        projects?.forEach(project => {
+                            let pItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
+                            cMenu.addMenuItem(pItem);
 
-                            // Lazy loading delle Attività quando si espande il Progetto
-                            projectItem.menu.connect('open-state-changed', async (pMenu, pOpen) => {
-                                if (pOpen && pMenu.isEmpty()) {
+                            pItem.menu.connect('open-state-changed', async (aMenu, aOpen) => {
+                                if (aOpen && aMenu.isEmpty()) {
                                     const activities = await this.extension.api.getActivities(project.id);
-                                    
-                                    activities.forEach(activity => {
-                                        let actItem = new PopupMenu.PopupMenuItem(`  ↳ ${activity.name}`);
-                                        actItem.connect('activate', () => {
-                                            this._startTimer(project.id, activity.id, activity.name);
-                                        });
-                                        pMenu.addMenuItem(actItem);
+                                    activities?.forEach(act => {
+                                        let actItem = new PopupMenu.PopupMenuItem(act.name);
+                                        actItem.connect('activate', () => this._startTimer(project.id, act.id));
+                                        aMenu.addMenuItem(actItem);
                                     });
-                                    
-                                    // Tasto "+" rapido per nuova attività in questo progetto
-                                    let addAct = new PopupMenu.PopupMenuItem("➕ Nuova Attività...");
-                                    addAct.connect('activate', () => this._createNewActivity(project.id));
-                                    pMenu.addMenuItem(addAct);
                                 }
                             });
                         });
@@ -84,12 +75,20 @@ export const KimaiIndicator = GObject.registerClass(
             });
         }
 
-        async _startTimer(projectId, activityId, name) {
-            const result = await this.extension.api.startTimer(projectId, activityId);
-            if (result) {
-                this.activeTimesheet = result;
+        async _testConnection() {
+            if (!this.extension.api) {
+                Main.notify("Kimai: Nessun server configurato!");
+                return;
+            }
+            const ok = await this.extension.api.testConnection();
+            Main.notify(ok ? "Kimai: Connessione riuscita! ✅" : "Kimai: Errore di connessione! ❌");
+        }
+
+        async _startTimer(pId, aId) {
+            const res = await this.extension.api.startTimer(pId, aId);
+            if (res) {
+                this.activeTimesheet = res;
                 this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-stop-symbolic' });
-                // Volendo qui potremmo cambiare il colore dell'icona in rosso
             }
         }
 

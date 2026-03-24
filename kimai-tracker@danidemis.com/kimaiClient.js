@@ -12,7 +12,6 @@ export class KimaiClient {
     async _apiCall(method, endpoint, body = null) {
         const url = `${this.baseUrl}api/${endpoint}`;
         const message = Soup.Message.new(method, url);
-        
         message.request_headers.append('X-Auth-User', this.username);
         message.request_headers.append('X-Auth-Token', this.apiToken);
         
@@ -23,31 +22,17 @@ export class KimaiClient {
 
         try {
             const bytes = await this.session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null);
-            const decoder = new TextDecoder('utf-8');
-            const response = decoder.decode(bytes.toArray());
-            return JSON.parse(response);
+            return JSON.parse(new TextDecoder().decode(bytes.toArray()));
         } catch (e) {
-            log(`Errore Kimai API (${endpoint}): ${e}`);
+            console.error(`Kimai Error (${endpoint}): ${e}`);
             return null;
         }
     }
 
-    // Carica tutti i clienti
-    async getCustomers() {
-        return await this._apiCall('GET', 'customers');
-    }
-
-    // Carica i progetti filtrati per cliente
-    async getProjects(customerId) {
-        return await this._apiCall('GET', `projects?customer=${customerId}`);
-    }
-
-    // Carica le attività filtrate per progetto
-    async getActivities(projectId) {
-        return await this._apiCall('GET', `activities?project=${projectId}`);
-    }
-
-    // Avvia un timer
+    async getCustomers() { return await this._apiCall('GET', 'customers'); }
+    async getProjects(id) { return await this._apiCall('GET', `projects?customer=${id}`); }
+    async getActivities(id) { return await this._apiCall('GET', `activities?project=${id}`); }
+    
     async startTimer(projectId, activityId) {
         return await this._apiCall('POST', 'timesheets', {
             project: projectId,
@@ -56,13 +41,12 @@ export class KimaiClient {
         });
     }
 
-    async testConnection() {
-    try {
-        const result = await this._apiCall('GET', 'users/me');
-        // Se l'API restituisce l'oggetto utente (ha un campo 'username'), la connessione è OK
-        return result && result.username ? true : false;
-    } catch (e) {
-        return false;
+    async stopTimer(id) {
+        return await this._apiCall('PATCH', `timesheets/${id}/stop`);
     }
-}
+
+    async testConnection() {
+        const result = await this._apiCall('GET', 'users/me');
+        return result && result.username;
+    }
 }

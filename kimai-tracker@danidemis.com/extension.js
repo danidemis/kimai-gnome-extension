@@ -6,37 +6,32 @@ import { KimaiClient } from './kimaiClient.js';
 export default class KimaiTrackerExtension extends Extension {
     enable() {
         this._settings = this.getSettings();
+        this._reloadApi();
         
-        // Carica i server dal JSON salvato
-        const servers = JSON.parse(this._settings.get_string('servers-json'));
-        
-        // Trova il server predefinito o prendi il primo della lista
-        const defaultServer = servers.find(s => s.isDefault) || servers[0];
-
-        if (defaultServer) {
-            this.api = new KimaiClient(
-                defaultServer.url, 
-                defaultServer.user, 
-                defaultServer.token
-            );
-        }
-
         this._indicator = new KimaiIndicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
 
-        // Ascolta i cambiamenti nelle impostazioni
-        this._settings.connect('changed::servers-json', () => {
-            this._reloadApi();
-        });
+        this._settings.connect('changed::servers-json', () => this._reloadApi());
     }
 
     _reloadApi() {
-        // Logica per ricaricare l'API quando l'utente cambia server nelle prefs
-        log("Server Kimai aggiornati, ricarico...");
+        try {
+            const servers = JSON.parse(this._settings.get_string('servers-json') || '[]');
+            const def = servers.find(s => s.isDefault) || servers[0];
+            if (def) {
+                this.api = new KimaiClient(def.url, def.user, def.token);
+            } else {
+                this.api = null;
+            }
+        } catch (e) {
+            this.api = null;
+        }
     }
 
     disable() {
         this._indicator?.destroy();
+        this._indicator = null;
+        this.api = null;
         this._settings = null;
     }
 }
