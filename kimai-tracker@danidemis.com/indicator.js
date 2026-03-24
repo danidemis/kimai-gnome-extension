@@ -12,7 +12,8 @@ export const KimaiIndicator = GObject.registerClass(
             super._init(0.5, 'Kimai Tracker', false);
             this.extension = extension;
             this.activeTimesheet = null;
-            this.activeTaskName = null;
+            this._mainMenuLoaded = false;
+            this._isRefreshing = false;
 
             this.icon = new St.Icon({
                 gicon: new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' }),
@@ -20,40 +21,43 @@ export const KimaiIndicator = GObject.registerClass(
             });
             this.add_child(this.icon);
 
-            // Caricamento iniziale per rendere il menu cliccabile
-            this._setupInitialMenu();
+            // Placeholder iniziale per permettere l'apertura del menu
+            this._setupPlaceholder();
 
-            // Usiamo un flag per evitare ricaricamenti continui che causano il "disposed" error
             this.menu.connect('open-state-changed', (menu, open) => {
-                if (open && !this._mainMenuLoaded) {
-                    this._refreshMenu().catch(err => log(`KIMAI_DEBUG: Errore menu: ${err}`));
+                if (open && !this._mainMenuLoaded && !this._isRefreshing) {
+                    this._refreshMenu().catch(err => log(`KIMAI_ERROR: ${err}`));
                 }
             });
         }
 
-        _setupInitialMenu() {
+        _setupPlaceholder() {
             this.menu.removeAll();
-            this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Caricamento..."));
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Inizializzazione..."));
             this._mainMenuLoaded = false;
         }
 
         async _refreshMenu() {
+            this._isRefreshing = true;
             log("KIMAI_DEBUG: Ricostruzione menu principale...");
+            
             this.menu.removeAll();
+            this._mainMenuLoaded = true;
 
+            // Voci di sistema
             let testItem = new PopupMenu.PopupMenuItem("🔄 Verifica Connessione...");
             testItem.connect('activate', () => this._testConnection());
             this.menu.addMenuItem(testItem);
 
-            // Tasto Reset per ricaricare forzatamente i dati
-            let resetItem = new PopupMenu.PopupMenuItem("🔄 Ricarica Dati Kimai");
-            resetItem.connect('activate', () => this._setupInitialMenu());
+            let resetItem = new PopupMenu.PopupMenuItem("🔄 Forza Ricaricamento");
+            resetItem.connect('activate', () => this._setupPlaceholder());
             this.menu.addMenuItem(resetItem);
 
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
             if (!this.extension.api) {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem("⚠️ Configura server"));
+                this._isRefreshing = false;
                 return;
             }
 
@@ -61,70 +65,69 @@ export const KimaiIndicator = GObject.registerClass(
                 let stopItem = new PopupMenu.PopupMenuItem(`🛑 Stop: ${this.activeTaskName}`);
                 stopItem.connect('activate', () => this._stopCurrentTimer());
                 this.menu.addMenuItem(stopItem);
+                this._isRefreshing = false;
                 return;
             }
 
             const customers = await this.extension.api.getCustomers();
-            if (!Array.isArray(customers) || customers.length === 0) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessun cliente trovato"));
-                return;
-            }
+            
+            if (Array.isArray(customers)) {
+                customers.forEach(customer => {
+                    let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
+                    this.menu.addMenuItem(customerItem);
+                    
+                    let cPlaceholder = new PopupMenu.PopupMenuItem("Caricamento progetti...");
+                    customerItem.menu.addMenuItem(cPlaceholder);
+                    customerItem._loaded = false;
 
-            this._mainMenuLoaded = true;
+                    customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
+                        if (cOpen && !customerItem._loaded) {
+                            log(`KIMAI: Caricamento progetti per ${customer.name}`);
+                            const projects = await this.extension.api.getProjects(customer.id);
+                            
+                            // Gestione sicura della rimozione placeholder
+                            if (customerItem.menu && !customerItem._loaded) {
+                                customerItem._loaded = true;
+                                cPlaceholder.destroy(); // Distruggiamo solo il placeholder, non tutto il menu
 
-            customers.forEach(customer => {
-                let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
-                this.menu.addMenuItem(customerItem);
-                customerItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Caricamento progetti..."));
-                customerItem._loaded = false;
-
-                customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
-                    if (cOpen && !customerItem._loaded) {
-                        log(`KIMAI_DEBUG: Caricamento progetti per ${customer.name}`);
-                        const projects = await this.extension.api.getProjects(customer.id);
-                        
-                        // Protezione contro oggetti distrutti (disposed)
-                        if (!customerItem.menu) return;
-                        customerItem.menu.removeAll();
-                        customerItem._loaded = true;
-
-                        if (Array.isArray(projects) && projects.length > 0) {
-                            projects.forEach(project => {
-                                let pItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
-                                customerItem.menu.addMenuItem(pItem);
-                                pItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Caricamento attività..."));
-                                pItem._loaded = false;
-
-                                // Gestione caricamento attività (Terzo livello)
-                                pItem.menu.connect('open-state-changed', async (aMenu, aOpen) => {
-                                    if (aOpen && !pItem._loaded) {
-                                        log(`KIMAI_DEBUG: Caricamento attività per progetto ${project.name} (ID: ${project.id})`);
-                                        const activities = await this.extension.api.getActivities(project.id);
+                                if (Array.isArray(projects)) {
+                                    projects.forEach(project => {
+                                        let pItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
+                                        customerItem.menu.addMenuItem(pItem);
                                         
-                                        if (!pItem.menu) return;
-                                        pItem.menu.removeAll();
-                                        pItem._loaded = true;
+                                        let pPlaceholder = new PopupMenu.PopupMenuItem("Caricamento attività...");
+                                        pItem.menu.addMenuItem(pPlaceholder);
+                                        pItem._loaded = false;
 
-                                        if (Array.isArray(activities) && activities.length > 0) {
-                                            activities.forEach(act => {
-                                                let actItem = new PopupMenu.PopupMenuItem(`→ ${act.name}`);
-                                                actItem.connect('activate', () => {
-                                                    this._startTimer(project.id, act.id, act.name);
-                                                });
-                                                pItem.menu.addMenuItem(actItem);
-                                            });
-                                        } else {
-                                            pItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessuna attività"));
-                                        }
-                                    }
-                                });
-                            });
-                        } else {
-                            customerItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessun progetto"));
+                                        pItem.menu.connect('open-state-changed', async (pMenu, pOpen) => {
+                                            if (pOpen && !pItem._loaded) {
+                                                log(`KIMAI: Caricamento attività per ${project.name}`);
+                                                const activities = await this.extension.api.getActivities(project.id);
+                                                
+                                                if (pItem.menu && !pItem._loaded) {
+                                                    pItem._loaded = true;
+                                                    pPlaceholder.destroy();
+
+                                                    if (Array.isArray(activities) && activities.length > 0) {
+                                                        activities.forEach(act => {
+                                                            let actItem = new PopupMenu.PopupMenuItem(`→ ${act.name}`);
+                                                            actItem.connect('activate', () => this._startTimer(project.id, act.id, act.name));
+                                                            pItem.menu.addMenuItem(actItem);
+                                                        });
+                                                    } else {
+                                                        pItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessuna attività"));
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+                            }
                         }
-                    }
+                    });
                 });
-            });
+            }
+            this._isRefreshing = false;
         }
 
         async _testConnection() {
@@ -147,9 +150,8 @@ export const KimaiIndicator = GObject.registerClass(
             if (this.activeTimesheet) {
                 await this.extension.api.stopTimer(this.activeTimesheet.id);
                 this.activeTimesheet = null;
-                this.activeTaskName = null;
                 this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' });
-                Main.notify("Kimai Tracker", "Attività fermata.");
+                Main.notify("Kimai Tracker", "Attività terminata.");
             }
         }
     }
