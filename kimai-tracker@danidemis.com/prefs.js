@@ -12,13 +12,16 @@ export default class KimaiPrefs extends ExtensionPreferences {
         const group = new Adw.PreferencesGroup({ title: 'Configurazione Server Kimai' });
         page.add(group);
 
-        const nameEntry = new Adw.EntryRow({ title: 'Nome' });
-        const urlEntry = new Adw.EntryRow({ title: 'URL' });
-        const userEntry = new Adw.EntryRow({ title: 'Username' });
-        const tokenEntry = new Adw.PasswordEntryRow({ title: 'API Token' });
-        const saveBtn = new Gtk.Button({ label: 'Salva Server', margin_top: 12, css_classes: ['suggested-action'] });
+        const nameEntry = new Adw.EntryRow({ title: 'Nome Server (es. Lavoro)' });
+        const urlEntry = new Adw.EntryRow({ title: 'URL (es. https://kimai.it)' });
+        const tokenEntry = new Adw.PasswordEntryRow({ title: 'API Token (Password API)' });
+        const saveBtn = new Gtk.Button({ 
+            label: 'Salva Server', 
+            margin_top: 12, 
+            css_classes: ['suggested-action'] 
+        });
 
-        group.add(nameEntry); group.add(urlEntry); group.add(userEntry); group.add(tokenEntry); group.add(saveBtn);
+        group.add(nameEntry); group.add(urlEntry); group.add(tokenEntry); group.add(saveBtn);
 
         const listGroup = new Adw.PreferencesGroup({ title: 'Server Salvati', margin_top: 20 });
         this._listBox = new Gtk.ListBox({ css_classes: ['boxed-list'] });
@@ -27,17 +30,16 @@ export default class KimaiPrefs extends ExtensionPreferences {
 
         saveBtn.connect('clicked', () => {
             let servers = this._getServers();
-            if (urlEntry.get_text()) {
+            if (urlEntry.get_text() && tokenEntry.get_text()) {
                 servers.push({
                     id: Date.now(),
                     name: nameEntry.get_text() || 'Kimai',
                     url: urlEntry.get_text(),
-                    user: userEntry.get_text(),
                     token: tokenEntry.get_text()
                 });
                 this._settings.set_string('servers-json', JSON.stringify(servers));
                 this._refreshList();
-                [nameEntry, urlEntry, userEntry, tokenEntry].forEach(e => e.set_text(''));
+                [nameEntry, urlEntry, tokenEntry].forEach(e => e.set_text(''));
             }
         });
         this._refreshList();
