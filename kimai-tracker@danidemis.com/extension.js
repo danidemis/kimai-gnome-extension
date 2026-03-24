@@ -19,8 +19,9 @@ export default class KimaiTrackerExtension extends Extension {
             const servers = JSON.parse(this._settings.get_string('servers-json') || '[]');
             const def = servers[0]; 
             if (def && def.url && def.token) {
-                // Sincronizzato con il costruttore di kimaiClient.js
+                // Sincronizzato con il nuovo costruttore (solo 2 parametri)
                 this.api = new KimaiClient(def.url, def.token);
+                log("KIMAI: API ricaricata con successo");
             } else {
                 this.api = null;
             }

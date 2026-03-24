@@ -2,7 +2,6 @@ import Soup from 'gi://Soup';
 import GLib from 'gi://GLib';
 
 export class KimaiClient {
-    // Solo due parametri: URL e Token (Password API)
     constructor(baseUrl, apiToken) {
         this.baseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
         this.apiToken = apiToken;
@@ -11,15 +10,11 @@ export class KimaiClient {
 
     async _apiCall(method, endpoint, body = null) {
         const url = `${this.baseUrl}api/${endpoint}`;
-        
-        // In Soup 3, creiamo il messaggio con method e GUri
         const message = Soup.Message.new(method, url);
         
-        // Header Bearer (fondamentale per Nginx)
         message.request_headers.append('Authorization', `Bearer ${this.apiToken}`);
         message.request_headers.append('Accept', 'application/json');
 
-        // Aggiungiamo il body solo per POST/PATCH e se non è nullo
         if (body && (method === 'POST' || method === 'PATCH')) {
             const bytes = GLib.Bytes.new(JSON.stringify(body));
             message.set_request_body_from_bytes('application/json', bytes);
@@ -36,7 +31,7 @@ export class KimaiClient {
 
             return JSON.parse(new TextDecoder().decode(bytes.toArray()));
         } catch (e) {
-            log(`KIMAI_API_ERROR: Eccezione su ${endpoint}: ${e}`);
+            log(`KIMAI_API_ERROR: Errore su ${endpoint}: ${e}`);
             return null;
         }
     }

@@ -35,10 +35,9 @@ export const KimaiIndicator = GObject.registerClass(
 
         async _refreshMenu() {
             this.menu.removeAll();
+
             let testItem = new PopupMenu.PopupMenuItem("🔄 Verifica Connessione...");
-            testItem.connect('activate', () => {
-                this._testConnection().catch(err => log(`KIMAI_DEBUG: Errore test: ${err}`));
-            });
+            testItem.connect('activate', () => this._testConnection());
             this.menu.addMenuItem(testItem);
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -63,18 +62,26 @@ export const KimaiIndicator = GObject.registerClass(
             customers.forEach(customer => {
                 let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
                 this.menu.addMenuItem(customerItem);
+                
+                // Placeholder per forzare l'apertura del sottomenu
+                customerItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Caricamento progetti..."));
 
                 customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
-                    if (cOpen && cMenu.isEmpty()) {
+                    if (cOpen) {
+                        log(`KIMAI: Caricamento progetti per ${customer.name}`);
                         const projects = await this.extension.api.getProjects(customer.id);
-                        if (Array.isArray(projects)) {
+                        cMenu.removeAll();
+                        
+                        if (Array.isArray(projects) && projects.length > 0) {
                             projects.forEach(project => {
                                 let pItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
                                 cMenu.addMenuItem(pItem);
+                                pItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Caricamento attività..."));
 
                                 pItem.menu.connect('open-state-changed', async (aMenu, aOpen) => {
-                                    if (aOpen && aMenu.isEmpty()) {
+                                    if (aOpen) {
                                         const activities = await this.extension.api.getActivities(project.id);
+                                        aMenu.removeAll();
                                         if (Array.isArray(activities)) {
                                             activities.forEach(act => {
                                                 let actItem = new PopupMenu.PopupMenuItem(`→ ${act.name}`);
@@ -85,6 +92,8 @@ export const KimaiIndicator = GObject.registerClass(
                                     }
                                 });
                             });
+                        } else {
+                            cMenu.addMenuItem(new PopupMenu.PopupMenuItem("Nessun progetto"));
                         }
                     }
                 });
@@ -94,7 +103,8 @@ export const KimaiIndicator = GObject.registerClass(
         async _testConnection() {
             if (!this.extension.api) return;
             const ok = await this.extension.api.testConnection();
-            Main.notify(ok ? "Kimai: Connessione OK ✅" : "Kimai: Errore credenziali ❌");
+            // Correzione: Main.notify richiede Titolo e Messaggio (due stringhe)
+            Main.notify("Kimai Tracker", ok ? "Connessione riuscita! ✅" : "Errore credenziali! ❌");
         }
 
         async _startTimer(pId, aId) {
@@ -102,7 +112,7 @@ export const KimaiIndicator = GObject.registerClass(
             if (res && res.id) {
                 this.activeTimesheet = res;
                 this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-stop-symbolic' });
-                Main.notify("Kimai: Timer avviato!");
+                Main.notify("Kimai Tracker", "Timer avviato con successo!");
             }
         }
 
@@ -111,7 +121,7 @@ export const KimaiIndicator = GObject.registerClass(
                 await this.extension.api.stopTimer(this.activeTimesheet.id);
                 this.activeTimesheet = null;
                 this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' });
-                Main.notify("Kimai: Timer fermato!");
+                Main.notify("Kimai Tracker", "Timer fermato!");
             }
         }
     }
