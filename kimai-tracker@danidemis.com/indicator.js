@@ -11,9 +11,12 @@ export const KimaiIndicator = GObject.registerClass(
         _init(extension) {
             super._init(0.5, 'Kimai Tracker', false);
             this.extension = extension;
+            
+            // Stato della selezione
+            this._selectedCustomer = null;
+            this._selectedProject = null;
+            this._selectedActivity = null;
             this.activeTimesheet = null;
-            this._mainMenuLoaded = false;
-            this._isRefreshing = false;
 
             this.icon = new St.Icon({
                 gicon: new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' }),
@@ -21,128 +24,106 @@ export const KimaiIndicator = GObject.registerClass(
             });
             this.add_child(this.icon);
 
-            // Placeholder iniziale per permettere l'apertura del menu
-            this._setupPlaceholder();
-
-            this.menu.connect('open-state-changed', (menu, open) => {
-                if (open && !this._mainMenuLoaded && !this._isRefreshing) {
-                    this._refreshMenu().catch(err => log(`KIMAI_ERROR: ${err}`));
-                }
-            });
-        }
-
-        _setupPlaceholder() {
-            this.menu.removeAll();
-            this.menu.addMenuItem(new PopupMenu.PopupMenuItem("Inizializzazione..."));
-            this._mainMenuLoaded = false;
+            // Costruiamo il menu la prima volta
+            this._refreshMenu();
         }
 
         async _refreshMenu() {
-            this._isRefreshing = true;
-            log("KIMAI_DEBUG: Ricostruzione menu principale...");
-            
             this.menu.removeAll();
-            this._mainMenuLoaded = true;
 
-            // Voci di sistema
-            let testItem = new PopupMenu.PopupMenuItem("🔄 Verifica Connessione...");
-            testItem.connect('activate', () => this._testConnection());
-            this.menu.addMenuItem(testItem);
-
-            let resetItem = new PopupMenu.PopupMenuItem("🔄 Forza Ricaricamento");
-            resetItem.connect('activate', () => this._setupPlaceholder());
-            this.menu.addMenuItem(resetItem);
-
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-            if (!this.extension.api) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem("⚠️ Configura server"));
-                this._isRefreshing = false;
-                return;
-            }
-
+            // 1. SEZIONE STATO / STOP
             if (this.activeTimesheet) {
-                let stopItem = new PopupMenu.PopupMenuItem(`🛑 Stop: ${this.activeTaskName}`);
+                let stopItem = new PopupMenu.PopupMenuItem(`🛑 STOP: ${this._selectedActivity.name}`);
                 stopItem.connect('activate', () => this._stopCurrentTimer());
                 this.menu.addMenuItem(stopItem);
-                this._isRefreshing = false;
-                return;
+                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             }
 
-            const customers = await this.extension.api.getCustomers();
-            
+            // 2. SEZIONE SELEZIONE CLIENTE
+            let customerLabel = this._selectedCustomer ? `👤 Cliente: ${this._selectedCustomer.name}` : "👤 Seleziona Cliente...";
+            let customerMenu = new PopupMenu.PopupSubMenuMenuItem(customerLabel);
+            this.menu.addMenuItem(customerMenu);
+
+            const customers = await this.extension.api?.getCustomers() || [];
             if (Array.isArray(customers)) {
-                customers.forEach(customer => {
-                    let customerItem = new PopupMenu.PopupSubMenuMenuItem(customer.name);
-                    this.menu.addMenuItem(customerItem);
-                    
-                    let cPlaceholder = new PopupMenu.PopupMenuItem("Caricamento progetti...");
-                    customerItem.menu.addMenuItem(cPlaceholder);
-                    customerItem._loaded = false;
-
-                    customerItem.menu.connect('open-state-changed', async (cMenu, cOpen) => {
-                        if (cOpen && !customerItem._loaded) {
-                            log(`KIMAI: Caricamento progetti per ${customer.name}`);
-                            const projects = await this.extension.api.getProjects(customer.id);
-                            
-                            // Gestione sicura della rimozione placeholder
-                            if (customerItem.menu && !customerItem._loaded) {
-                                customerItem._loaded = true;
-                                cPlaceholder.destroy(); // Distruggiamo solo il placeholder, non tutto il menu
-
-                                if (Array.isArray(projects)) {
-                                    projects.forEach(project => {
-                                        let pItem = new PopupMenu.PopupSubMenuMenuItem(project.name);
-                                        customerItem.menu.addMenuItem(pItem);
-                                        
-                                        let pPlaceholder = new PopupMenu.PopupMenuItem("Caricamento attività...");
-                                        pItem.menu.addMenuItem(pPlaceholder);
-                                        pItem._loaded = false;
-
-                                        pItem.menu.connect('open-state-changed', async (pMenu, pOpen) => {
-                                            if (pOpen && !pItem._loaded) {
-                                                log(`KIMAI: Caricamento attività per ${project.name}`);
-                                                const activities = await this.extension.api.getActivities(project.id);
-                                                
-                                                if (pItem.menu && !pItem._loaded) {
-                                                    pItem._loaded = true;
-                                                    pPlaceholder.destroy();
-
-                                                    if (Array.isArray(activities) && activities.length > 0) {
-                                                        activities.forEach(act => {
-                                                            let actItem = new PopupMenu.PopupMenuItem(`→ ${act.name}`);
-                                                            actItem.connect('activate', () => this._startTimer(project.id, act.id, act.name));
-                                                            pItem.menu.addMenuItem(actItem);
-                                                        });
-                                                    } else {
-                                                        pItem.menu.addMenuItem(new PopupMenu.PopupMenuItem("Nessuna attività"));
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    });
-                                }
-                            }
-                        }
+                customers.forEach(c => {
+                    let item = new PopupMenu.PopupMenuItem(c.name);
+                    item.connect('activate', () => {
+                        this._selectedCustomer = c;
+                        this._selectedProject = null; // Reset successivi
+                        this._selectedActivity = null;
+                        this._refreshMenu();
                     });
+                    customerMenu.menu.addMenuItem(item);
                 });
             }
-            this._isRefreshing = false;
+
+            // 3. SEZIONE SELEZIONE PROGETTO (Attiva solo se cliente selezionato)
+            if (this._selectedCustomer) {
+                let projectLabel = this._selectedProject ? `📂 Progetto: ${this._selectedProject.name}` : "📂 Seleziona Progetto...";
+                let projectMenu = new PopupMenu.PopupSubMenuMenuItem(projectLabel);
+                this.menu.addMenuItem(projectMenu);
+
+                const projects = await this.extension.api.getProjects(this._selectedCustomer.id);
+                if (Array.isArray(projects)) {
+                    projects.forEach(p => {
+                        let item = new PopupMenu.PopupMenuItem(p.name);
+                        item.connect('activate', () => {
+                            this._selectedProject = p;
+                            this._selectedActivity = null;
+                            this._refreshMenu();
+                        });
+                        projectMenu.menu.addMenuItem(item);
+                    });
+                }
+            }
+
+            // 4. SEZIONE SELEZIONE ATTIVITÀ (Attiva solo se progetto selezionato)
+            if (this._selectedProject) {
+                let activityLabel = this._selectedActivity ? `📝 Attività: ${this._selectedActivity.name}` : "📝 Seleziona Attività...";
+                let activityMenu = new PopupMenu.PopupSubMenuMenuItem(activityLabel);
+                this.menu.addMenuItem(activityMenu);
+
+                const activities = await this.extension.api.getActivities(this._selectedProject.id);
+                if (Array.isArray(activities)) {
+                    activities.forEach(a => {
+                        let item = new PopupMenu.PopupMenuItem(a.name);
+                        item.connect('activate', () => {
+                            this._selectedActivity = a;
+                            this._refreshMenu();
+                        });
+                        activityMenu.menu.addMenuItem(item);
+                    });
+                }
+            }
+
+            // 5. TASTO START
+            if (this._selectedActivity && !this.activeTimesheet) {
+                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+                let startBtn = new PopupMenu.PopupMenuItem("▶ AVVIA TIMER", { style_class: 'active-item' });
+                startBtn.connect('activate', () => this._startTimer());
+                this.menu.addMenuItem(startBtn);
+            }
+
+            // 6. UTILITY IN FONDO
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            let testItem = new PopupMenu.PopupMenuItem("🔄 Verifica Connessione");
+            testItem.connect('activate', () => this._testConnection());
+            this.menu.addMenuItem(testItem);
         }
 
         async _testConnection() {
-            if (!this.extension.api) return;
-            const ok = await this.extension.api.testConnection();
+            const ok = await this.extension.api?.testConnection();
             Main.notify("Kimai Tracker", ok ? "Connessione riuscita! ✅" : "Errore credenziali! ❌");
         }
 
-        async _startTimer(pId, aId, name) {
-            const res = await this.extension.api.startTimer(pId, aId);
-            if (res && res.id) {
+        async _startTimer() {
+            const res = await this.extension.api.startTimer(this._selectedProject.id, this._selectedActivity.id);
+            if (res) {
                 this.activeTimesheet = res;
-                this.activeTaskName = name;
                 this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-stop-symbolic' });
-                Main.notify("Kimai Tracker", `Timer avviato: ${name}`);
+                Main.notify("Kimai Tracker", "Timer avviato!");
+                this._refreshMenu();
             }
         }
 
@@ -151,7 +132,8 @@ export const KimaiIndicator = GObject.registerClass(
                 await this.extension.api.stopTimer(this.activeTimesheet.id);
                 this.activeTimesheet = null;
                 this.icon.gicon = new Gio.ThemedIcon({ name: 'media-playback-start-symbolic' });
-                Main.notify("Kimai Tracker", "Attività terminata.");
+                Main.notify("Kimai Tracker", "Timer fermato.");
+                this._refreshMenu();
             }
         }
     }
